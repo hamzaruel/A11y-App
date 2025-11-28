@@ -99,7 +99,7 @@ export function IssueCategory({ type, issues }: IssueCategoryProps) {
                   </div>
                   
                   <a
-                    href={`https://www.w3.org/WAI/WCAG21/Understanding/${issue.wcagReference.toLowerCase().replace(/\s+/g, "-")}`}
+                   href="https://www.w3.org/TR/WCAG22/"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-xs text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded w-fit"

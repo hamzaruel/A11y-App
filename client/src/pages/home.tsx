@@ -116,7 +116,7 @@ export default function Home() {
         <div className="container max-w-4xl mx-auto px-4 py-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-muted-foreground">
             <p>
-              AccessiScan checks for common WCAG 2.1 accessibility issues.
+              AccessiScan checks for common WCAG 2.2 accessibility issues.
             </p>
             <div className="flex items-center gap-4">
               <a 
@@ -126,7 +126,7 @@ export default function Home() {
                 className="hover:text-primary hover:underline focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 rounded"
                 data-testid="link-wcag-reference"
               >
-                WCAG 2.1 Reference
+                WCAG 2.2 Reference
               </a>
               <a 
                 href="https://www.w3.org/WAI/fundamentals/accessibility-intro/" 

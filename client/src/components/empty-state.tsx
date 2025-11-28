@@ -65,7 +65,7 @@ export function EmptyState() {
 
       <div className="text-center text-sm text-muted-foreground max-w-md">
         <p>
-          This tool checks for common WCAG 2.1 accessibility issues. For a comprehensive 
+          This tool checks for common WCAG 2.2 accessibility issues. For a comprehensive 
           audit, consider professional accessibility testing services.
         </p>
       </div>
