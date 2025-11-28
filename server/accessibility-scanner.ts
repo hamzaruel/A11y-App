@@ -43,12 +43,34 @@ async function fetchWebsiteContent(url: string): Promise<string> {
   }
 }
 
+function normalizeUrl(url: string, baseUrl: string): string | null {
+  try {
+    const fullUrl = new URL(url, baseUrl);
+    fullUrl.hash = "";
+    fullUrl.search = "";
+    let path = fullUrl.pathname;
+    if (path.endsWith("/") && path.length > 1) {
+      path = path.slice(0, -1);
+    }
+    fullUrl.pathname = path;
+    return fullUrl.toString();
+  } catch {
+    return null;
+  }
+}
+
 function extractLinks(html: string, baseUrl: string): string[] {
   const links: string[] = [];
   const linkRegex = /<a[^>]+href\s*=\s*["']([^"'#]+)["'][^>]*>/gi;
   let match;
   
-  const base = new URL(baseUrl);
+  let base: URL;
+  try {
+    base = new URL(baseUrl);
+  } catch {
+    return links;
+  }
+  
   const seenUrls = new Set<string>();
   
   while ((match = linkRegex.exec(html)) !== null) {
@@ -59,15 +81,15 @@ function extractLinks(html: string, baseUrl: string): string[] {
       continue;
     }
     
+    const normalized = normalizeUrl(href, baseUrl);
+    if (!normalized) continue;
+    
     try {
-      const fullUrl = new URL(href, baseUrl);
+      const fullUrl = new URL(normalized);
       
       if (fullUrl.hostname !== base.hostname) {
         continue;
       }
-      
-      fullUrl.hash = "";
-      const normalized = fullUrl.toString();
       
       if (seenUrls.has(normalized)) {
         continue;
@@ -452,16 +474,15 @@ function checkKeyboardAccessibility(interactiveElements: ParsedElement[], pageUr
   return issues;
 }
 
-async function scanSinglePage(url: string): Promise<PageResult> {
-  const html = await fetchWebsiteContent(url);
+function scanPageContent(html: string, pageUrl: string): PageResult {
   const { images, links, buttons, headings, interactiveElements } = parseHTML(html);
   
   const allIssues: AccessibilityIssue[] = [
-    ...checkMissingAltText(images, url),
-    ...checkEmptyLinks(links, url),
-    ...checkMissingAriaLabels(buttons, interactiveElements, url),
-    ...checkHeadingHierarchy(headings, url),
-    ...checkKeyboardAccessibility(interactiveElements, url),
+    ...checkMissingAltText(images, pageUrl),
+    ...checkEmptyLinks(links, pageUrl),
+    ...checkMissingAriaLabels(buttons, interactiveElements, pageUrl),
+    ...checkHeadingHierarchy(headings, pageUrl),
+    ...checkKeyboardAccessibility(interactiveElements, pageUrl),
   ];
   
   const errorCount = allIssues.filter(i => i.severity === "error").length;
@@ -472,7 +493,7 @@ async function scanSinglePage(url: string): Promise<PageResult> {
   const passedChecks = checksPerformed - categoriesWithIssues;
   
   return {
-    url,
+    url: pageUrl,
     scannedAt: new Date().toISOString(),
     totalIssues: allIssues.length,
     errorCount,
@@ -482,96 +503,91 @@ async function scanSinglePage(url: string): Promise<PageResult> {
   };
 }
 
-async function crawlAndScan(startUrl: string, maxPages: number = 10): Promise<{ pageResults: PageResult[]; discoveredLinks: string[] }> {
+async function scanSinglePage(url: string): Promise<PageResult> {
+  const html = await fetchWebsiteContent(url);
+  return scanPageContent(html, url);
+}
+
+async function crawlAndScan(startUrl: string, maxPages: number = 10): Promise<PageResult[]> {
   const scannedUrls = new Set<string>();
   const pageResults: PageResult[] = [];
-  const urlsToScan: string[] = [startUrl];
-  const allDiscoveredLinks: string[] = [];
+  const urlsToScan: string[] = [];
   
-  while (urlsToScan.length > 0 && scannedUrls.size < maxPages) {
+  const normalizedStart = normalizeUrl(startUrl, startUrl);
+  if (!normalizedStart) {
+    throw new Error("Invalid start URL");
+  }
+  
+  urlsToScan.push(normalizedStart);
+  scannedUrls.add(normalizedStart);
+  
+  while (urlsToScan.length > 0 && pageResults.length < maxPages) {
     const url = urlsToScan.shift()!;
-    
-    if (scannedUrls.has(url)) {
-      continue;
-    }
     
     try {
       const html = await fetchWebsiteContent(url);
-      scannedUrls.add(url);
+      
+      const pageResult = scanPageContent(html, url);
+      pageResults.push(pageResult);
       
       const newLinks = extractLinks(html, url);
-      allDiscoveredLinks.push(...newLinks);
       
       for (const link of newLinks) {
-        if (!scannedUrls.has(link) && !urlsToScan.includes(link)) {
+        if (!scannedUrls.has(link)) {
+          scannedUrls.add(link);
           urlsToScan.push(link);
         }
       }
-      
-      const { images, links, buttons, headings, interactiveElements } = parseHTML(html);
-      
-      const allIssues: AccessibilityIssue[] = [
-        ...checkMissingAltText(images, url),
-        ...checkEmptyLinks(links, url),
-        ...checkMissingAriaLabels(buttons, interactiveElements, url),
-        ...checkHeadingHierarchy(headings, url),
-        ...checkKeyboardAccessibility(interactiveElements, url),
-      ];
-      
-      const errorCount = allIssues.filter(i => i.severity === "error").length;
-      const warningCount = allIssues.filter(i => i.severity === "warning").length;
-      
-      const checksPerformed = 5;
-      const categoriesWithIssues = new Set(allIssues.map(i => i.type)).size;
-      const passedChecks = checksPerformed - categoriesWithIssues;
-      
-      pageResults.push({
-        url,
-        scannedAt: new Date().toISOString(),
-        totalIssues: allIssues.length,
-        errorCount,
-        warningCount,
-        passedChecks: Math.max(0, passedChecks),
-        issues: allIssues,
-      });
     } catch (error) {
       console.error(`Failed to scan ${url}:`, error);
     }
   }
   
-  return { pageResults, discoveredLinks: allDiscoveredLinks };
+  return pageResults;
 }
 
 export async function scanWebsite(url: string, mode: ScanMode = "single"): Promise<ScanResult> {
   if (mode === "single") {
     const pageResult = await scanSinglePage(url);
     return {
-      ...pageResult,
+      url: pageResult.url,
+      scannedAt: pageResult.scannedAt,
       scanMode: "single",
+      totalIssues: pageResult.totalIssues,
+      errorCount: pageResult.errorCount,
+      warningCount: pageResult.warningCount,
+      passedChecks: pageResult.passedChecks,
+      issues: pageResult.issues,
       pagesScanned: 1,
     };
   }
   
-  const { pageResults } = await crawlAndScan(url, 10);
+  const pageResults = await crawlAndScan(url, 10);
   
   if (pageResults.length === 0) {
     throw new Error("Unable to scan any pages on this website");
   }
   
-  const allIssues = pageResults.flatMap(p => p.issues);
-  const errorCount = allIssues.filter(i => i.severity === "error").length;
-  const warningCount = allIssues.filter(i => i.severity === "warning").length;
+  let totalErrors = 0;
+  let totalWarnings = 0;
+  let totalPassed = 0;
+  const allIssues: AccessibilityIssue[] = [];
   
-  const totalPassedChecks = pageResults.reduce((sum, p) => sum + p.passedChecks, 0);
+  for (const page of pageResults) {
+    totalErrors += page.errorCount;
+    totalWarnings += page.warningCount;
+    totalPassed += page.passedChecks;
+    allIssues.push(...page.issues);
+  }
   
   return {
     url,
     scannedAt: new Date().toISOString(),
     scanMode: "full",
     totalIssues: allIssues.length,
-    errorCount,
-    warningCount,
-    passedChecks: totalPassedChecks,
+    errorCount: totalErrors,
+    warningCount: totalWarnings,
+    passedChecks: totalPassed,
     pagesScanned: pageResults.length,
     pageResults,
     issues: allIssues,
