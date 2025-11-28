@@ -7,7 +7,7 @@ import { LoadingState } from "@/components/loading-state";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorState } from "@/components/error-state";
 import { useToast } from "@/hooks/use-toast";
-import type { ScanResult } from "@shared/schema";
+import type { ScanResult, ScanMode } from "@shared/schema";
 
 type ScanState = "idle" | "loading" | "success" | "error";
 
@@ -16,12 +16,14 @@ export default function Home() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [lastUrl, setLastUrl] = useState("");
+  const [lastMode, setLastMode] = useState<ScanMode>("single");
   const { toast } = useToast();
 
-  const handleScan = async (url: string) => {
+  const handleScan = async (url: string, mode: ScanMode) => {
     setScanState("loading");
     setErrorMessage("");
     setLastUrl(url);
+    setLastMode(mode);
 
     try {
       const response = await fetch("/api/scan", {
@@ -29,7 +31,7 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ url }),
+        body: JSON.stringify({ url, mode }),
       });
 
       if (!response.ok) {
@@ -41,11 +43,15 @@ export default function Home() {
       setScanResult(result);
       setScanState("success");
 
+      const pagesText = result.pagesScanned && result.pagesScanned > 1 
+        ? ` across ${result.pagesScanned} pages` 
+        : "";
+      
       toast({
         title: "Scan Complete",
         description: result.totalIssues > 0
-          ? `Found ${result.totalIssues} accessibility ${result.totalIssues === 1 ? "issue" : "issues"}`
-          : "No accessibility issues found!",
+          ? `Found ${result.totalIssues} accessibility ${result.totalIssues === 1 ? "issue" : "issues"}${pagesText}`
+          : `No accessibility issues found${pagesText}!`,
       });
     } catch (error) {
       setScanState("error");
@@ -56,7 +62,7 @@ export default function Home() {
 
   const handleRetry = () => {
     if (lastUrl) {
-      handleScan(lastUrl);
+      handleScan(lastUrl, lastMode);
     } else {
       setScanState("idle");
     }

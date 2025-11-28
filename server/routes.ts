@@ -2,7 +2,6 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { scanWebsite } from "./accessibility-scanner";
 import { scanRequestSchema } from "@shared/schema";
-import { z } from "zod";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -19,8 +18,8 @@ export async function registerRoutes(
         });
       }
 
-      const { url } = parseResult.data;
-      const result = await scanWebsite(url);
+      const { url, mode } = parseResult.data;
+      const result = await scanWebsite(url, mode);
       
       return res.json(result);
     } catch (error) {

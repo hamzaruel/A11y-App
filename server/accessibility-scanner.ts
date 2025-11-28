@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import type { ScanResult, AccessibilityIssue, IssueType, Severity } from "@shared/schema";
+import type { ScanResult, PageResult, AccessibilityIssue, IssueType, Severity, ScanMode } from "@shared/schema";
 
 interface ParsedElement {
   tag: string;
@@ -41,6 +41,51 @@ async function fetchWebsiteContent(url: string): Promise<string> {
     }
     throw error;
   }
+}
+
+function extractLinks(html: string, baseUrl: string): string[] {
+  const links: string[] = [];
+  const linkRegex = /<a[^>]+href\s*=\s*["']([^"'#]+)["'][^>]*>/gi;
+  let match;
+  
+  const base = new URL(baseUrl);
+  const seenUrls = new Set<string>();
+  
+  while ((match = linkRegex.exec(html)) !== null) {
+    let href = match[1].trim();
+    
+    if (!href || href.startsWith("javascript:") || href.startsWith("mailto:") || 
+        href.startsWith("tel:") || href.startsWith("data:")) {
+      continue;
+    }
+    
+    try {
+      const fullUrl = new URL(href, baseUrl);
+      
+      if (fullUrl.hostname !== base.hostname) {
+        continue;
+      }
+      
+      fullUrl.hash = "";
+      const normalized = fullUrl.toString();
+      
+      if (seenUrls.has(normalized)) {
+        continue;
+      }
+      
+      const path = fullUrl.pathname.toLowerCase();
+      if (path.match(/\.(jpg|jpeg|png|gif|svg|webp|pdf|doc|docx|xls|xlsx|zip|css|js|json|xml|ico)$/)) {
+        continue;
+      }
+      
+      seenUrls.add(normalized);
+      links.push(normalized);
+    } catch {
+      continue;
+    }
+  }
+  
+  return links;
 }
 
 function parseHTML(html: string): {
@@ -199,7 +244,8 @@ function createIssue(
   element: string,
   description: string,
   wcagReference: string,
-  codeSnippet: string
+  codeSnippet: string,
+  pageUrl?: string
 ): AccessibilityIssue {
   return {
     id: randomUUID(),
@@ -209,10 +255,11 @@ function createIssue(
     description,
     wcagReference,
     codeSnippet,
+    pageUrl,
   };
 }
 
-function checkMissingAltText(images: ParsedElement[]): AccessibilityIssue[] {
+function checkMissingAltText(images: ParsedElement[], pageUrl?: string): AccessibilityIssue[] {
   const issues: AccessibilityIssue[] = [];
   
   for (const img of images) {
@@ -230,7 +277,8 @@ function checkMissingAltText(images: ParsedElement[]): AccessibilityIssue[] {
         "<img>",
         `Image is missing alt attribute. Screen readers cannot describe this image to users.`,
         "1.1.1 Non-text Content",
-        img.outerHTML
+        img.outerHTML,
+        pageUrl
       ));
     }
   }
@@ -238,7 +286,7 @@ function checkMissingAltText(images: ParsedElement[]): AccessibilityIssue[] {
   return issues;
 }
 
-function checkEmptyLinks(links: ParsedElement[]): AccessibilityIssue[] {
+function checkEmptyLinks(links: ParsedElement[], pageUrl?: string): AccessibilityIssue[] {
   const issues: AccessibilityIssue[] = [];
   
   for (const link of links) {
@@ -255,7 +303,8 @@ function checkEmptyLinks(links: ParsedElement[]): AccessibilityIssue[] {
         "<a>",
         `Link has no accessible text. Screen readers cannot convey the link's purpose.`,
         "2.4.4 Link Purpose",
-        link.outerHTML
+        link.outerHTML,
+        pageUrl
       ));
     }
   }
@@ -263,7 +312,7 @@ function checkEmptyLinks(links: ParsedElement[]): AccessibilityIssue[] {
   return issues;
 }
 
-function checkMissingAriaLabels(buttons: ParsedElement[], interactiveElements: ParsedElement[]): AccessibilityIssue[] {
+function checkMissingAriaLabels(buttons: ParsedElement[], interactiveElements: ParsedElement[], pageUrl?: string): AccessibilityIssue[] {
   const issues: AccessibilityIssue[] = [];
   
   for (const button of buttons) {
@@ -280,7 +329,8 @@ function checkMissingAriaLabels(buttons: ParsedElement[], interactiveElements: P
         `<${button.tag}>`,
         `Button has no accessible name. Screen readers cannot identify this button's purpose.`,
         "4.1.2 Name, Role, Value",
-        button.outerHTML
+        button.outerHTML,
+        pageUrl
       ));
     }
   }
@@ -293,7 +343,8 @@ function checkMissingAriaLabels(buttons: ParsedElement[], interactiveElements: P
         "<icon-button>",
         `Icon-only button lacks accessible text. Add aria-label or visually hidden text.`,
         "4.1.2 Name, Role, Value",
-        element.outerHTML
+        element.outerHTML,
+        pageUrl
       ));
     }
     
@@ -312,7 +363,8 @@ function checkMissingAriaLabels(buttons: ParsedElement[], interactiveElements: P
             `<${element.tag}>`,
             `Form control has no associated label. Users may not understand its purpose.`,
             "1.3.1 Info and Relationships",
-            element.outerHTML
+            element.outerHTML,
+            pageUrl
           ));
         }
       }
@@ -322,7 +374,7 @@ function checkMissingAriaLabels(buttons: ParsedElement[], interactiveElements: P
   return issues;
 }
 
-function checkHeadingHierarchy(headings: ParsedElement[]): AccessibilityIssue[] {
+function checkHeadingHierarchy(headings: ParsedElement[], pageUrl?: string): AccessibilityIssue[] {
   const issues: AccessibilityIssue[] = [];
   
   if (headings.length === 0) {
@@ -337,7 +389,8 @@ function checkHeadingHierarchy(headings: ParsedElement[]): AccessibilityIssue[] 
       `<${firstHeading.tag}>`,
       `Page should start with an h1 heading. Found ${firstHeading.tag.toUpperCase()} instead.`,
       "1.3.1 Info and Relationships",
-      firstHeading.outerHTML
+      firstHeading.outerHTML,
+      pageUrl
     ));
   }
   
@@ -349,7 +402,8 @@ function checkHeadingHierarchy(headings: ParsedElement[]): AccessibilityIssue[] 
       "<h1>",
       `Page has ${h1Count} h1 headings. Consider using only one main h1 per page.`,
       "1.3.1 Info and Relationships",
-      `Multiple h1 elements found (${h1Count} total)`
+      `Multiple h1 elements found (${h1Count} total)`,
+      pageUrl
     ));
   }
   
@@ -364,7 +418,8 @@ function checkHeadingHierarchy(headings: ParsedElement[]): AccessibilityIssue[] 
         `<${headings[i].tag}>`,
         `Heading level skips from h${prevLevel} to h${currentLevel}. This creates confusion for screen reader users.`,
         "1.3.1 Info and Relationships",
-        headings[i].outerHTML
+        headings[i].outerHTML,
+        pageUrl
       ));
     }
   }
@@ -372,7 +427,7 @@ function checkHeadingHierarchy(headings: ParsedElement[]): AccessibilityIssue[] 
   return issues;
 }
 
-function checkKeyboardAccessibility(interactiveElements: ParsedElement[]): AccessibilityIssue[] {
+function checkKeyboardAccessibility(interactiveElements: ParsedElement[], pageUrl?: string): AccessibilityIssue[] {
   const issues: AccessibilityIssue[] = [];
   
   for (const element of interactiveElements) {
@@ -387,7 +442,8 @@ function checkKeyboardAccessibility(interactiveElements: ParsedElement[]): Acces
           `<${element.tag}>`,
           `Element has positive tabindex (${tabindexValue}). This disrupts natural tab order.`,
           "2.4.3 Focus Order",
-          element.outerHTML
+          element.outerHTML,
+          pageUrl
         ));
       }
     }
@@ -396,16 +452,16 @@ function checkKeyboardAccessibility(interactiveElements: ParsedElement[]): Acces
   return issues;
 }
 
-export async function scanWebsite(url: string): Promise<ScanResult> {
+async function scanSinglePage(url: string): Promise<PageResult> {
   const html = await fetchWebsiteContent(url);
   const { images, links, buttons, headings, interactiveElements } = parseHTML(html);
   
   const allIssues: AccessibilityIssue[] = [
-    ...checkMissingAltText(images),
-    ...checkEmptyLinks(links),
-    ...checkMissingAriaLabels(buttons, interactiveElements),
-    ...checkHeadingHierarchy(headings),
-    ...checkKeyboardAccessibility(interactiveElements),
+    ...checkMissingAltText(images, url),
+    ...checkEmptyLinks(links, url),
+    ...checkMissingAriaLabels(buttons, interactiveElements, url),
+    ...checkHeadingHierarchy(headings, url),
+    ...checkKeyboardAccessibility(interactiveElements, url),
   ];
   
   const errorCount = allIssues.filter(i => i.severity === "error").length;
@@ -422,6 +478,102 @@ export async function scanWebsite(url: string): Promise<ScanResult> {
     errorCount,
     warningCount,
     passedChecks: Math.max(0, passedChecks),
+    issues: allIssues,
+  };
+}
+
+async function crawlAndScan(startUrl: string, maxPages: number = 10): Promise<{ pageResults: PageResult[]; discoveredLinks: string[] }> {
+  const scannedUrls = new Set<string>();
+  const pageResults: PageResult[] = [];
+  const urlsToScan: string[] = [startUrl];
+  const allDiscoveredLinks: string[] = [];
+  
+  while (urlsToScan.length > 0 && scannedUrls.size < maxPages) {
+    const url = urlsToScan.shift()!;
+    
+    if (scannedUrls.has(url)) {
+      continue;
+    }
+    
+    try {
+      const html = await fetchWebsiteContent(url);
+      scannedUrls.add(url);
+      
+      const newLinks = extractLinks(html, url);
+      allDiscoveredLinks.push(...newLinks);
+      
+      for (const link of newLinks) {
+        if (!scannedUrls.has(link) && !urlsToScan.includes(link)) {
+          urlsToScan.push(link);
+        }
+      }
+      
+      const { images, links, buttons, headings, interactiveElements } = parseHTML(html);
+      
+      const allIssues: AccessibilityIssue[] = [
+        ...checkMissingAltText(images, url),
+        ...checkEmptyLinks(links, url),
+        ...checkMissingAriaLabels(buttons, interactiveElements, url),
+        ...checkHeadingHierarchy(headings, url),
+        ...checkKeyboardAccessibility(interactiveElements, url),
+      ];
+      
+      const errorCount = allIssues.filter(i => i.severity === "error").length;
+      const warningCount = allIssues.filter(i => i.severity === "warning").length;
+      
+      const checksPerformed = 5;
+      const categoriesWithIssues = new Set(allIssues.map(i => i.type)).size;
+      const passedChecks = checksPerformed - categoriesWithIssues;
+      
+      pageResults.push({
+        url,
+        scannedAt: new Date().toISOString(),
+        totalIssues: allIssues.length,
+        errorCount,
+        warningCount,
+        passedChecks: Math.max(0, passedChecks),
+        issues: allIssues,
+      });
+    } catch (error) {
+      console.error(`Failed to scan ${url}:`, error);
+    }
+  }
+  
+  return { pageResults, discoveredLinks: allDiscoveredLinks };
+}
+
+export async function scanWebsite(url: string, mode: ScanMode = "single"): Promise<ScanResult> {
+  if (mode === "single") {
+    const pageResult = await scanSinglePage(url);
+    return {
+      ...pageResult,
+      scanMode: "single",
+      pagesScanned: 1,
+    };
+  }
+  
+  const { pageResults } = await crawlAndScan(url, 10);
+  
+  if (pageResults.length === 0) {
+    throw new Error("Unable to scan any pages on this website");
+  }
+  
+  const allIssues = pageResults.flatMap(p => p.issues);
+  const errorCount = allIssues.filter(i => i.severity === "error").length;
+  const warningCount = allIssues.filter(i => i.severity === "warning").length;
+  
+  const totalPassedChecks = pageResults.reduce((sum, p) => sum + p.passedChecks, 0);
+  
+  return {
+    url,
+    scannedAt: new Date().toISOString(),
+    scanMode: "full",
+    totalIssues: allIssues.length,
+    errorCount,
+    warningCount,
+    passedChecks: totalPassedChecks,
+    pagesScanned: pageResults.length,
+    pageResults,
     issues: allIssues,
   };
 }

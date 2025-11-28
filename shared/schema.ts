@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+export const scanModeSchema = z.enum(["single", "full"]);
+export type ScanMode = z.infer<typeof scanModeSchema>;
+
 export const issueTypeSchema = z.enum([
   "missing_alt_text",
   "empty_link",
@@ -22,11 +25,12 @@ export const accessibilityIssueSchema = z.object({
   description: z.string(),
   wcagReference: z.string(),
   codeSnippet: z.string(),
+  pageUrl: z.string().optional(),
 });
 
 export type AccessibilityIssue = z.infer<typeof accessibilityIssueSchema>;
 
-export const scanResultSchema = z.object({
+export const pageResultSchema = z.object({
   url: z.string().url(),
   scannedAt: z.string(),
   totalIssues: z.number(),
@@ -36,10 +40,26 @@ export const scanResultSchema = z.object({
   issues: z.array(accessibilityIssueSchema),
 });
 
+export type PageResult = z.infer<typeof pageResultSchema>;
+
+export const scanResultSchema = z.object({
+  url: z.string().url(),
+  scannedAt: z.string(),
+  scanMode: scanModeSchema,
+  totalIssues: z.number(),
+  errorCount: z.number(),
+  warningCount: z.number(),
+  passedChecks: z.number(),
+  issues: z.array(accessibilityIssueSchema),
+  pagesScanned: z.number().optional(),
+  pageResults: z.array(pageResultSchema).optional(),
+});
+
 export type ScanResult = z.infer<typeof scanResultSchema>;
 
 export const scanRequestSchema = z.object({
   url: z.string().url("Please enter a valid URL"),
+  mode: scanModeSchema.default("single"),
 });
 
 export type ScanRequest = z.infer<typeof scanRequestSchema>;
